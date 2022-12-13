@@ -25,6 +25,8 @@ const FT_BALANCE_OF_GAS: Gas = Gas(4_000_000_000_000);
 const NEAR_WITHDRAW_GAS: Gas = Gas(4_000_000_000_000);
 /// Gas to call near_deposit on wrap near contract
 const NEAR_DEPOSIT_GAS: Gas = Gas(7_000_000_000_000);
+/// Gas to call callback_return_value on wrap near contract
+const CALLBACK_RETURN_VALUE_GAS: Gas = Gas(3_000_000_000_000);
 /// Gas to call callback_get_amount_out method.
 const CALLBACK_GET_AMOUNT_OUT_GAS: Gas =
     Gas(10_000_000_000_000 + FT_BALANCE_OF_GAS.0 + CALLBACK_TRANSFER_TO_TARGET_ACCOUNT_GAS.0);
@@ -45,7 +47,7 @@ pub trait ExtWNearToken {
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct ButterCore {
     pub controller: AccountId,
-    pub ref_exchanger: AccountId,
+    pub ref_exchange: AccountId,
     pub wrapped_token: AccountId,
     pub owner: AccountId,
 }
@@ -55,13 +57,13 @@ impl ButterCore {
     #[init]
     pub fn new(
         controller: AccountId,
-        ref_exchanger: AccountId,
+        ref_exchange: AccountId,
         wrapped_token: AccountId,
         owner: AccountId,
     ) -> Self {
         Self {
             controller,
-            ref_exchanger,
+            ref_exchange,
             wrapped_token,
             owner,
         }
@@ -80,17 +82,17 @@ impl ButterCore {
         self.controller = controller;
     }
 
-    pub fn get_ref_exchanger(&self) -> AccountId {
-        self.ref_exchanger.clone()
+    pub fn get_ref_exchange(&self) -> AccountId {
+        self.ref_exchange.clone()
     }
 
-    pub fn set_ref_exchanger(&mut self, ref_exchanger: AccountId) {
+    pub fn set_ref_exchange(&mut self, ref_exchange: AccountId) {
         assert_eq!(
             self.owner,
             env::predecessor_account_id(),
             "unexpected caller"
         );
-        self.ref_exchanger = ref_exchanger;
+        self.ref_exchange = ref_exchange;
     }
 
     pub fn get_wrapped_token(&self) -> AccountId {
@@ -134,7 +136,7 @@ impl ButterCore {
         ext_ft_core::ext(token.clone())
             .with_static_gas(FT_TRANSFER_CALL_REF_GAS)
             .with_attached_deposit(1)
-            .ft_transfer_call(self.ref_exchanger.clone(), amount, None, msg)
+            .ft_transfer_call(self.ref_exchange.clone(), amount, None, msg)
             .then(
                 Self::ext(env::current_account_id())
                     .with_static_gas(CALLBACK_GET_AMOUNT_OUT_GAS)
@@ -179,8 +181,13 @@ impl ButterCore {
                                 self.controller.clone(),
                                 U128(amount.0 - used_amount.0),
                                 None,
-                            );
-                        PromiseOrValue::Value(used_amount)
+                            )
+                            .then(
+                                Self::ext(env::current_account_id())
+                                    .with_static_gas(CALLBACK_RETURN_VALUE_GAS)
+                                    .callback_return_value(used_amount),
+                            )
+                            .into()
                     } else {
                         PromiseOrValue::Value(U128(amount.0 - used_amount.0))
                     }
@@ -195,17 +202,20 @@ impl ButterCore {
                                     token_out,
                                     target_account,
                                     target_token,
+                                    amount,
+                                    direct_call,
                                 ),
-                        );
-                    if direct_call {
-                        PromiseOrValue::Value(used_amount)
-                    } else {
-                        PromiseOrValue::Value(U128(0))
-                    }
+                        )
+                        .into()
                 }
             }
             PromiseResult::Failed => panic_str("call ref exchange failed"),
         }
+    }
+
+    #[private]
+    pub fn callback_return_value(&self, amount: U128) -> U128 {
+        amount
     }
 
     #[private]
@@ -214,7 +224,9 @@ impl ButterCore {
         token_out: AccountId,
         target_account: AccountId,
         target_token_opt: Option<AccountId>,
-    ) -> PromiseOrValue<bool> {
+        amount_in: U128,
+        direct_call: bool,
+    ) -> PromiseOrValue<U128> {
         assert_eq!(
             1,
             env::promise_results_count(),
@@ -226,7 +238,8 @@ impl ButterCore {
             PromiseResult::Successful(x) => {
                 let amount_out = serde_json::from_slice::<U128>(&x).unwrap();
                 if amount_out.0 == 0 {
-                    return PromiseOrValue::Value(true);
+                    log!("!!!caution: amount out should not be zero!!!");
+                    return PromiseOrValue::Value(if direct_call { amount_in } else { U128(0) });
                 }
                 if let Some(_target_token) = target_token_opt {
                     // swap in
@@ -247,6 +260,7 @@ impl ButterCore {
                                     .callback_check_transfer(
                                         token_out,
                                         target_account,
+                                        amount_in,
                                         amount_out,
                                         true,
                                     ),
@@ -263,6 +277,7 @@ impl ButterCore {
                                     .callback_check_transfer(
                                         token_out,
                                         target_account,
+                                        amount_in,
                                         amount_out,
                                         false,
                                     ),
@@ -271,12 +286,45 @@ impl ButterCore {
                     }
                 } else {
                     // swap out
-                    // always succeed because we give enough gas and MOS has been registered in token_out
+                    // // always succeed because we give enough gas and MOS has been registered in token_out
                     ext_ft_core::ext(token_out)
                         .with_static_gas(FT_TRANSFER_CALL_MOS_GAS)
                         .with_attached_deposit(1)
                         .ft_transfer_call(target_account, amount_out, None, "".to_string())
+                        .then(
+                            Self::ext(env::current_account_id())
+                                .with_static_gas(CALLBACK_RETURN_VALUE_GAS)
+                                .callback_return_value(if direct_call {
+                                    amount_in
+                                } else {
+                                    U128(0)
+                                }),
+                        )
                         .into()
+
+                    // ext_ft_core::ext(token_out)
+                    //     .with_static_gas(FT_TRANSFER_GAS)
+                    //     .with_attached_deposit(1)
+                    //     .ft_transfer(self.controller.clone(), amount_out, None)
+                    //     .then(
+                    //         Self::ext(env::current_account_id())
+                    //             .with_static_gas(CALLBACK_RETURN_VALUE_GAS)
+                    //             .callback_return_value(if direct_call {
+                    //                 amount_in
+                    //             } else {
+                    //                 U128(0)
+                    //             }),
+                    //     )
+                    //     .then(
+                    //         Self::ext(env::current_account_id())
+                    //             .with_static_gas(CALLBACK_RETURN_VALUE_GAS)
+                    //             .callback_return_value(if direct_call {
+                    //                 amount_in
+                    //             } else {
+                    //                 U128(0)
+                    //             }),
+                    //     )
+                    //     .into()
                 }
             }
             // actually get balance won't fail if we give enough gas
@@ -289,9 +337,10 @@ impl ButterCore {
         &self,
         token: AccountId,
         account: AccountId,
+        amount_in: U128,
         amount: U128,
         is_native: bool,
-    ) -> PromiseOrValue<bool> {
+    ) -> U128 {
         assert_eq!(
             1,
             env::promise_results_count(),
@@ -300,30 +349,30 @@ impl ButterCore {
 
         match env::promise_result(0) {
             PromiseResult::NotReady => env::abort(),
-            PromiseResult::Successful(_x) => PromiseOrValue::Value(true),
+            PromiseResult::Successful(_x) => {}
             PromiseResult::Failed => {
                 // if transfer to user failed, transfer to mos
-                // let lf_msg = LostFoundMessage { account, is_native };
-                // let msg = serde_json::to_string(&lf_msg).unwrap();
+                let memo = format!("user {} lost, is native: {}", account, is_native);
                 if is_native {
                     ext_wnear_token::ext(self.wrapped_token.clone())
                         .with_static_gas(NEAR_DEPOSIT_GAS)
                         .with_attached_deposit(amount.0)
-                        .near_deposit();
+                        .near_deposit()
+                        .then(
+                            ext_ft_core::ext(token)
+                                .with_static_gas(FT_TRANSFER_GAS)
+                                .with_attached_deposit(1)
+                                .ft_transfer(self.controller.clone(), amount, Some(memo)),
+                        );
+                } else {
+                    ext_ft_core::ext(token)
+                        .with_static_gas(FT_TRANSFER_GAS)
+                        .with_attached_deposit(1)
+                        .ft_transfer(self.controller.clone(), amount, Some(memo));
                 }
-                // ext_ft_core::ext(token)
-                //     .with_static_gas(FT_TRANSFER_CALL_LOST_FOUND_GAS)
-                //     .with_attached_deposit(1)
-                //     .ft_transfer(self.controller.clone(), amount, None, msg)
-                //     .into()
-                let memo = format!("user {} lost, is native: {}", account, is_native);
-                ext_ft_core::ext(token)
-                    .with_static_gas(FT_TRANSFER_GAS)
-                    .with_attached_deposit(1)
-                    .ft_transfer(self.controller.clone(), amount, Some(memo))
-                    .into()
             }
         }
+        amount_in
     }
 
     pub fn swap(&mut self, amount: U128, core_swap_msg: CoreSwapMessage) -> PromiseOrValue<U128> {

@@ -19,7 +19,7 @@ impl Factory {
         &mut self,
         name: String,
         controller: AccountId,
-        ref_exchanger: AccountId,
+        ref_exchange: AccountId,
         wrapped_token: AccountId,
         owner: AccountId,
     ) -> Promise {
@@ -32,7 +32,7 @@ impl Factory {
                 "new".to_string(),
                 json!({
                     "controller": controller,
-                    "ref_exchanger": ref_exchanger,
+                    "ref_exchange": ref_exchange,
                     "wrapped_token": wrapped_token,
                     "owner": owner})
                 .to_string()
