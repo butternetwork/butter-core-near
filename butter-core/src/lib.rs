@@ -168,7 +168,7 @@ impl ButterCore {
         target_account: AccountId,
         target_token: Option<AccountId>,
         direct_call: bool,
-    ) -> PromiseOrValue<U128> {
+    ) -> PromiseOrValue<(U128, U128)> {
         assert_eq!(
             1,
             env::promise_results_count(),
@@ -193,11 +193,11 @@ impl ButterCore {
                             .then(
                                 Self::ext(env::current_account_id())
                                     .with_static_gas(CALLBACK_RETURN_VALUE_GAS)
-                                    .callback_return_value(used_amount),
+                                    .callback_return_value(used_amount, U128(0)),
                             )
                             .into()
                     } else {
-                        PromiseOrValue::Value(U128(amount.0 - used_amount.0))
+                        PromiseOrValue::Value((U128(amount.0 - used_amount.0), U128(0)))
                     }
                 } else {
                     ext_ft_core::ext(token_out.clone())
@@ -226,8 +226,8 @@ impl ButterCore {
     }
 
     #[private]
-    pub fn callback_return_value(&self, amount: U128) -> U128 {
-        amount
+    pub fn callback_return_value(&self, amount_in: U128, amount_out: U128) -> (U128, U128) {
+        (amount_in, amount_out)
     }
 
     #[private]
@@ -238,7 +238,7 @@ impl ButterCore {
         target_token_opt: Option<AccountId>,
         amount_in: U128,
         direct_call: bool,
-    ) -> PromiseOrValue<U128> {
+    ) -> PromiseOrValue<(U128, U128)> {
         assert_eq!(
             1,
             env::promise_results_count(),
@@ -251,7 +251,11 @@ impl ButterCore {
                 let amount_out = serde_json::from_slice::<U128>(&x).unwrap();
                 if amount_out.0 == 0 {
                     log!("!!!caution: amount out should not be zero!!!");
-                    return PromiseOrValue::Value(if direct_call { amount_in } else { U128(0) });
+                    return PromiseOrValue::Value(if direct_call {
+                        (amount_in, U128(0))
+                    } else {
+                        (U128(0), U128(0))
+                    });
                 }
                 if let Some(_target_token) = target_token_opt {
                     // swap in
@@ -306,11 +310,10 @@ impl ButterCore {
                         .then(
                             Self::ext(env::current_account_id())
                                 .with_static_gas(CALLBACK_RETURN_VALUE_GAS)
-                                .callback_return_value(if direct_call {
-                                    amount_in
-                                } else {
-                                    U128(0)
-                                }),
+                                .callback_return_value(
+                                    if direct_call { amount_in } else { U128(0) },
+                                    amount_out,
+                                ),
                         )
                         .into()
                 }
@@ -328,7 +331,7 @@ impl ButterCore {
         amount_in: U128,
         amount: U128,
         is_native: bool,
-    ) -> U128 {
+    ) -> (U128, U128) {
         assert_eq!(
             1,
             env::promise_results_count(),
@@ -368,7 +371,7 @@ impl ButterCore {
                 }
             }
         }
-        amount_in
+        (amount_in, amount)
     }
 
     pub fn swap(&mut self, amount: U128, core_swap_msg: CoreSwapMessage) -> PromiseOrValue<U128> {
