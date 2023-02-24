@@ -12,7 +12,7 @@ use near_sdk::{
 };
 
 /// Gas to call ft_transfer_call method.
-const FT_TRANSFER_CALL_REF_GAS: Gas = Gas(86_000_000_000_000);
+const FT_TRANSFER_CALL_REF_GAS: Gas = Gas(76_000_000_000_000);
 /// Gas to call ft_transfer_call method.
 const FT_TRANSFER_CALL_MOS_GAS: Gas = Gas(35_000_000_000_000);
 /// Gas to call ft_transfer_call method.
@@ -30,12 +30,16 @@ const CALLBACK_RETURN_VALUE_GAS: Gas = Gas(3_000_000_000_000);
 /// Gas to call callback_get_amount_out method, not include gas used in cross contract call.
 const CALLBACK_GET_AMOUNT_OUT_GAS: Gas = Gas(10_000_000_000_000);
 /// Gas to call callback_transfer_to_target_account method.
-const CALLBACK_TRANSFER_TO_TARGET_ACCOUNT_SWAP_IN_GAS: Gas =
-    Gas(10_000_000_000_000 + NEAR_WITHDRAW_GAS.0 + CALLBACK_CHECK_TRANSFER_GAS.0);
+const CALLBACK_TRANSFER_TO_TARGET_ACCOUNT_SWAP_IN_GAS: Gas = Gas(14_000_000_000_000
+    + NEAR_WITHDRAW_GAS.0
+    + CALLBACK_CHECK_TRANSFER_GAS.0
+    + CALLBACK_TRANSFER_NEAR_GAS.0);
 const CALLBACK_TRANSFER_TO_TARGET_ACCOUNT_SWAP_OUT_GAS: Gas =
     Gas(10_000_000_000_000 + FT_TRANSFER_CALL_MOS_GAS.0 + CALLBACK_RETURN_VALUE_GAS.0);
 /// Gas to call callback_check_transfer method.
 const CALLBACK_CHECK_TRANSFER_GAS: Gas = Gas(8_000_000_000_000 + FT_TRANSFER_GAS.0);
+
+const CALLBACK_TRANSFER_NEAR_GAS: Gas = Gas(8_000_000_000_000);
 
 #[ext_contract(ext_wnear_token)]
 pub trait ExtWNearToken {
@@ -267,8 +271,9 @@ impl ButterCore {
                             .with_attached_deposit(1)
                             .near_withdraw(amount_out)
                             .then(
-                                Promise::new(target_account.clone())
-                                    .transfer(Balance::from(amount_out)),
+                                Self::ext(env::current_account_id())
+                                    .with_static_gas(CALLBACK_TRANSFER_NEAR_GAS)
+                                    .callback_transfer_near(target_account.clone(), amount_out),
                             )
                             .then(
                                 Self::ext(env::current_account_id())
@@ -321,6 +326,11 @@ impl ButterCore {
             // actually get balance won't fail if we give enough gas
             PromiseResult::Failed => panic_str("get token_out balance of core failed"),
         }
+    }
+
+    #[private]
+    pub fn callback_transfer_near(&self, account: AccountId, amount: U128) -> Promise {
+        Promise::new(account).transfer(Balance::from(amount))
     }
 
     #[private]
