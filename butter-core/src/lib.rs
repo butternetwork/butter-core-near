@@ -30,16 +30,14 @@ const CALLBACK_RETURN_VALUE_GAS: Gas = Gas(3_000_000_000_000);
 /// Gas to call callback_get_amount_out method, not include gas used in cross contract call.
 const CALLBACK_GET_AMOUNT_OUT_GAS: Gas = Gas(10_000_000_000_000);
 /// Gas to call callback_transfer_to_target_account method.
-const CALLBACK_TRANSFER_TO_TARGET_ACCOUNT_SWAP_IN_GAS: Gas = Gas(14_000_000_000_000
-    + NEAR_WITHDRAW_GAS.0
-    + CALLBACK_CHECK_TRANSFER_GAS.0
-    + CALLBACK_TRANSFER_NEAR_GAS.0);
+const CALLBACK_TRANSFER_TO_TARGET_ACCOUNT_SWAP_IN_GAS: Gas =
+    Gas(14_000_000_000_000 + NEAR_WITHDRAW_GAS.0 + CALLBACK_TRANSFER_NEAR_GAS.0);
 const CALLBACK_TRANSFER_TO_TARGET_ACCOUNT_SWAP_OUT_GAS: Gas =
     Gas(10_000_000_000_000 + FT_TRANSFER_CALL_MOS_GAS.0 + CALLBACK_RETURN_VALUE_GAS.0);
 /// Gas to call callback_check_transfer method.
 const CALLBACK_CHECK_TRANSFER_GAS: Gas = Gas(8_000_000_000_000 + FT_TRANSFER_GAS.0);
 
-const CALLBACK_TRANSFER_NEAR_GAS: Gas = Gas(8_000_000_000_000);
+const CALLBACK_TRANSFER_NEAR_GAS: Gas = Gas(8_000_000_000_000 + CALLBACK_CHECK_TRANSFER_GAS.0);
 
 #[ext_contract(ext_wnear_token)]
 pub trait ExtWNearToken {
@@ -273,17 +271,11 @@ impl ButterCore {
                             .then(
                                 Self::ext(env::current_account_id())
                                     .with_static_gas(CALLBACK_TRANSFER_NEAR_GAS)
-                                    .callback_transfer_near(target_account.clone(), amount_out),
-                            )
-                            .then(
-                                Self::ext(env::current_account_id())
-                                    .with_static_gas(CALLBACK_CHECK_TRANSFER_GAS)
-                                    .callback_check_transfer(
+                                    .callback_transfer_near(
                                         token_out,
                                         target_account,
                                         amount_in,
                                         amount_out,
-                                        true,
                                     ),
                             )
                             .into()
@@ -329,8 +321,26 @@ impl ButterCore {
     }
 
     #[private]
-    pub fn callback_transfer_near(&self, account: AccountId, amount: U128) -> Promise {
-        Promise::new(account).transfer(Balance::from(amount))
+    pub fn callback_transfer_near(
+        &self,
+        token_out: AccountId,
+        target_account: AccountId,
+        amount_in: U128,
+        amount_out: U128,
+    ) -> Promise {
+        Promise::new(target_account.clone())
+            .transfer(Balance::from(amount_out))
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(CALLBACK_CHECK_TRANSFER_GAS)
+                    .callback_check_transfer(
+                        token_out,
+                        target_account,
+                        amount_in,
+                        amount_out,
+                        true,
+                    ),
+            )
     }
 
     #[private]
