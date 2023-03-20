@@ -5,14 +5,14 @@ use near_contract_standards::fungible_token::core::ext_ft_core;
 use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::env::panic_str;
-use near_sdk::json_types::U128;
+use near_sdk::json_types::{Base64VecU8, U128};
 use near_sdk::{
     env, ext_contract, log, near_bindgen, serde_json, AccountId, Balance, Gas, PanicOnDefault,
     Promise, PromiseOrValue, PromiseResult,
 };
 
 /// Gas to call ft_transfer_call method.
-const FT_TRANSFER_CALL_REF_GAS: Gas = Gas(76_000_000_000_000);
+const FT_TRANSFER_CALL_REF_GAS: Gas = Gas(84_000_000_000_000);
 /// Gas to call ft_transfer_call method.
 const FT_TRANSFER_CALL_MOS_GAS: Gas = Gas(35_000_000_000_000);
 /// Gas to call ft_transfer_call method.
@@ -38,6 +38,8 @@ const CALLBACK_TRANSFER_TO_TARGET_ACCOUNT_SWAP_OUT_GAS: Gas =
 const CALLBACK_CHECK_TRANSFER_GAS: Gas = Gas(8_000_000_000_000 + FT_TRANSFER_GAS.0);
 
 const CALLBACK_TRANSFER_NEAR_GAS: Gas = Gas(8_000_000_000_000 + CALLBACK_CHECK_TRANSFER_GAS.0);
+
+const GAS_FOR_UPGRADE_SELF_DEPLOY: Gas = Gas(15_000_000_000_000);
 
 #[ext_contract(ext_wnear_token)]
 pub trait ExtWNearToken {
@@ -418,6 +420,36 @@ impl ButterCore {
             core_swap_msg.target_token,
             true,
         ))
+    }
+
+    pub fn upgrade_self(&mut self, code: Base64VecU8) {
+        assert!(
+            self.is_owner(),
+            "unexpected caller {}",
+            env::predecessor_account_id()
+        );
+
+        let current_id = env::current_account_id();
+        let promise_id = env::promise_batch_create(&current_id);
+        env::promise_batch_action_deploy_contract(promise_id, &code.0);
+        env::promise_batch_action_function_call(
+            promise_id,
+            "migrate",
+            &[],
+            0,
+            env::prepaid_gas() - env::used_gas() - GAS_FOR_UPGRADE_SELF_DEPLOY,
+        );
+    }
+
+    fn is_owner(&self) -> bool {
+        env::predecessor_account_id() == self.owner
+    }
+
+    #[private]
+    #[init(ignore_state)]
+    pub fn migrate() -> Self {
+        let core: ButterCore = env::state_read().expect("ERR_CONTRACT_IS_NOT_INITIALIZED");
+        core
     }
 }
 

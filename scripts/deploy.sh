@@ -37,7 +37,7 @@ function deploy_core() {
                 "controller": "'$CONTROLLER'",
                 "ref_exchange": "'$REF_EXCHANGE'",
                 "wrapped_token":"'$WRAPPED_TOKEN'",
-                "owner": "'$MASTER_ACCOUNT'"
+                "owner": "'$OWNER'"
               }'
   near call "$FACTORY_ACCOUNT" create_butter_core "$INIT_ARGS" --accountId $MASTER_ACCOUNT --gas 300000000000000 --deposit 10
 }
