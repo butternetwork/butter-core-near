@@ -41,6 +41,8 @@ const CALLBACK_TRANSFER_NEAR_GAS: Gas = Gas(8_000_000_000_000 + CALLBACK_CHECK_T
 
 const GAS_FOR_UPGRADE_SELF_DEPLOY: Gas = Gas(15_000_000_000_000);
 
+const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
+
 #[ext_contract(ext_wnear_token)]
 pub trait ExtWNearToken {
     fn near_deposit(&mut self);
@@ -261,10 +263,11 @@ impl ButterCore {
                         (U128(0), U128(0))
                     });
                 }
-                if let Some(_target_token) = target_token_opt {
+                if let Some(target_token) = target_token_opt {
                     // swap in
                     // native token
-                    if self.wrapped_token == token_out {
+                    if self.wrapped_token == token_out && target_token.to_string().eq(ZERO_ADDRESS)
+                    {
                         // near_withdraw() won't fail because the core account has been registered and it has a positive "amount_out" token
                         ext_wnear_token::ext(self.wrapped_token.clone())
                             .with_static_gas(NEAR_WITHDRAW_GAS)
